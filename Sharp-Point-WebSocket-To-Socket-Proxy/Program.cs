@@ -31,16 +31,16 @@ namespace Sharp_Point_WebSocket_To_Socket_Proxy
                 {
                     _ = Manual.Reset();
                     _ = socket.BeginAccept(new AsyncCallback(OnAcceptWebSocket), new State() { WorkingSocket = socket });
-                    Console.WriteLine($"Waiting for connection of web client on port {PORT}....");
+                    Log($"Waiting for connection of web client on port {PORT}....");
                     _ = Manual.WaitOne();
                 }
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.Message);
-                Console.WriteLine(e.StackTrace);
-                Console.WriteLine();
-                Console.WriteLine("Press any key to exit...");
+                Log(e.Message);
+                Log(e.StackTrace);
+                Log("");
+                Log("Press any key to exit...");
                 Console.ReadKey();
             }
         }
@@ -62,7 +62,7 @@ namespace Sharp_Point_WebSocket_To_Socket_Proxy
                 }
                 if (client != null)
                 {
-                    Console.WriteLine($"Accepted connection from {client.GetClientIPAddress()}");
+                    Log($"Accepted connection from {client.GetClientIPAddress()}");
                     string acceptKey = Utility.GenerateAcceptKey(Utility.GetWebSocketKey(handShakeRequest));
                     //string response = $"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {acceptKey}\r\nSec-WebSocket-Extensions: permessage-deflate; client_max_window_bits=15\r\n\r\n";
                     string response = $"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {acceptKey}\r\n\r\n";
@@ -84,8 +84,8 @@ namespace Sharp_Point_WebSocket_To_Socket_Proxy
             }
             catch (SocketException e)
             {
-                Console.WriteLine(e.Message);
-                Console.WriteLine(e.StackTrace);
+                Log(e.Message);
+                Log(e.StackTrace);
             }
             finally
             {
@@ -101,6 +101,7 @@ namespace Sharp_Point_WebSocket_To_Socket_Proxy
             Socket client = state.WorkingSocket;
             Socket priceClient = state.PriceServerSocket;
             EndPoint ep = client.RemoteEndPoint;
+            Queue<byte[]> tempMessageQueue = new();
             string clientAddress = client.GetClientIPAddress();
 
             try
@@ -109,8 +110,8 @@ namespace Sharp_Point_WebSocket_To_Socket_Proxy
                 if (size > 0)
                 {
                     byte[] message = state.Buffer.TrimEnd().DecodeWebsocketFrame(state).SelectMany(i => i).ToArray();
-                    string messageString = message.ConvertToString().Replace("\r\n", "");
-                    Console.WriteLine($"message from {clientAddress}: {messageString}, length: {message.Length}, size: {size}");
+                    string messageString = message.ConvertToString();
+                    Log($"message from {clientAddress}: {messageString}, length: {message.Length}, size: {size}");
                     Array.Clear(state.Buffer, 0, state.Buffer.Length);
                     if (client.Connected)
                     {
@@ -118,14 +119,50 @@ namespace Sharp_Point_WebSocket_To_Socket_Proxy
                         {
                             if (priceClient.Connected)
                             {
-                                int sizePrice = priceClient.Send(message);
-                                Console.WriteLine($"sent message to price server: {messageString}, length: {message.Length}, size: {sizePrice}");
+                                if (messageString.StartsWith("4104"))
+                                {
+                                    int sizePrice = priceClient.Send(message);
+                                    Log($"sent message to price server: {message.ConvertToString()}, length: {message.ConvertToString().Length}, size: {sizePrice}");
+                                }
+                                else
+                                {
+                                    string[] mc = Regex.Split(messageString, @"41");
+                                    if (mc.Length >= 1)
+                                    {
+                                        foreach (string m in mc)
+                                        {
+                                            if (string.IsNullOrEmpty(m))
+                                            {
+                                                continue;
+                                            }
+                                            string msg = $"41{m}{Environment.NewLine}";
+                                            tempMessageQueue.Enqueue(msg.ToByteArray());
+                                        }
+                                        System.Timers.Timer timer = new(50);
+                                        timer.Elapsed += (sender, e) =>
+                                        {
+                                            if (tempMessageQueue.Count != 0)
+                                            {
+                                                byte[] msg = tempMessageQueue.Dequeue();
+                                                int sizePrice = priceClient.Send(msg);
+                                                Log($"sent message to price server: {msg.ConvertToString()}, length: {msg.ConvertToString().Length}, size: {sizePrice}");
+                                            }
+                                        };
+                                        timer.Start();
+                                        while (tempMessageQueue.Count != 0)
+                                        {
+
+                                        }
+                                        timer.Stop();
+                                        Log("sent all messages to price server");
+                                    }
+                                }
                                 _ = priceClient.BeginReceiveFrom(state.PriceBuffer, 0, State.BUFFER_SIZE, SocketFlags.None, ref ep, new AsyncCallback(OnReceivePrice), state);
                             }
                         }
                         catch (ObjectDisposedException)
                         {
-                            Console.WriteLine("Price client closed already");
+                            Log("Price client closed already");
                         }
                         _ = client.BeginReceiveFrom(state.Buffer, 0, State.BUFFER_SIZE, SocketFlags.None, ref ep, new AsyncCallback(OnReceive), state);
                     }
@@ -133,8 +170,8 @@ namespace Sharp_Point_WebSocket_To_Socket_Proxy
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.Message);
-                Console.WriteLine(e.StackTrace);
+                Log(e.Message);
+                Log(e.StackTrace);
             }
             finally
             {
@@ -195,8 +232,8 @@ namespace Sharp_Point_WebSocket_To_Socket_Proxy
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.Message);
-                Console.WriteLine(e.StackTrace);
+                Log(e.Message);
+                Log(e.StackTrace);
             }
         }
 
@@ -205,14 +242,16 @@ namespace Sharp_Point_WebSocket_To_Socket_Proxy
             try
             {
                 priceSocket.Connect(PRICE_IP, PRICE_PORT);
-                Console.WriteLine("Connected to price server.");
+                Log("Connected to price server.");
             }
             catch (SocketException e)
             {
-                Console.WriteLine(e.Message);
-                Console.WriteLine(e.StackTrace);
+                Log(e.Message);
+                Log(e.StackTrace);
             }
         }
+
+        public static void Log(string message) => Console.WriteLine($"{DateTime.Now:dd-MM-yyyy HH:mm:ss.fffff}:    {message}");
     }
 
     public class State
@@ -242,7 +281,7 @@ namespace Sharp_Point_WebSocket_To_Socket_Proxy
             return Convert.ToBase64String(sha1.ComputeHash($"{webSocketKey}{guid}".ToByteArray()));
         }
 
-        public static string ConvertToString(this byte[] bytes) => Encoding.Default.GetString(bytes);
+        public static string ConvertToString(this byte[] bytes) => Encoding.Default.GetString(bytes).Replace("\r\n", "");
         public static byte[] ToByteArray(this string str) => Encoding.Default.GetBytes(str);
         public static byte[] TrimEnd(this byte[] bytes)
         {
@@ -258,7 +297,7 @@ namespace Sharp_Point_WebSocket_To_Socket_Proxy
             switch (opCode)
             {
                 case 8:
-                    Console.WriteLine("Disconnecting socket and price server client.");
+                    Program.Log("Disconnecting socket and price server client.");
                     state.WorkingSocket.Shutdown(SocketShutdown.Both);
                     state.WorkingSocket.Disconnect(true);
                     state.PriceServerSocket.Shutdown(SocketShutdown.Both);
